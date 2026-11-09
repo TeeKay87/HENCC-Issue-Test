@@ -1,3 +1,5 @@
+# Test-only workflow for TeeKay87/HENCC-Issue-Test (main).
+# No changes to the production HEN-Cheats-Collection repository.
 name: HENCC - Issue Snapshot Test
 
 on:
@@ -5,12 +7,19 @@ on:
   issues:
     types: [opened, closed, reopened, edited, labeled, unlabeled]
 
-permissions:
-  issues: write
+# Keep complete snapshots from being deployed out of order as much as possible.
+# Back-to-back events still require dedicated concurrency/reconciliation tests.
+concurrency:
+  group: hencc-issue-snapshot-pages-test
+  cancel-in-progress: false
+
+permissions: {}
 
 jobs:
   generate-snapshot:
     runs-on: ubuntu-latest
+    permissions:
+      issues: write
 
     steps:
       - name: Label new HENCC reports
@@ -166,15 +175,41 @@ jobs:
               files
             };
 
+            // Only output location changes: make Pages' artifact root explicit.
+            fs.mkdirSync('public-issue-status', { recursive: true });
             fs.writeFileSync(
-              'github-issues.json',
+              'public-issue-status/github-issues.json',
               JSON.stringify(snapshot, null, 2) + '\n'
             );
+            fs.writeFileSync(
+              'public-issue-status/index.html',
+              '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>HENCC issue status test</title></head><body><a href="github-issues.json">Issue status JSON</a></body></html>\n'
+            );
+            fs.writeFileSync('public-issue-status/.nojekyll', '');
 
             core.info(JSON.stringify(snapshot, null, 2));
 
-      - name: Upload JSON result
+      - name: Upload JSON result (debug artifact)
         uses: actions/upload-artifact@v4
         with:
           name: hencc-issue-snapshot-test
-          path: github-issues.json
+          path: public-issue-status/github-issues.json
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: public-issue-status
+
+  deploy:
+    needs: generate-snapshot
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy issue snapshot to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
