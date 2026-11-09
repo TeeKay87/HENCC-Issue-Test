@@ -3,7 +3,7 @@ name: HENCC - Issue Snapshot Test
 on:
   workflow_dispatch:
   issues:
-    types: [closed, reopened]
+    types: [closed, reopened, edited]
     
 permissions:
   issues: read
