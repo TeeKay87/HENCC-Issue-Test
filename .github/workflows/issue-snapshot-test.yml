@@ -1,0 +1,118 @@
+name: HENCC - Issue Snapshot Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  issues: read
+
+jobs:
+  generate-snapshot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Generate HENCC issue data
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            const issues = await github.paginate(
+              github.rest.issues.listForRepo,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'open',
+                labels: 'bug',
+                per_page: 100
+              }
+            );
+
+            const groups = new Map();
+
+            for (const issue of issues) {
+              if (issue.pull_request) continue;
+
+              const body = issue.body || '';
+
+              const marker = body.match(
+                /<!--\s*HENCC:\s*([A-Z]{4}[0-9]{5})\/([0-9.]+)\/source:([a-fA-F0-9]{8})\s*-->/
+              );
+
+              if (!marker) continue;
+
+              const fileKey =
+                `${marker[1]}/${marker[2]}/source:${marker[3].toLowerCase()}`;
+
+              const section = body
+                .split(/^### Which cheat\(s\) have problems\?[ \t]*$/m)[1]
+                ?.split(/^### /m)[0] || '';
+
+              const cheats = [...new Set(
+                section
+                  .split(/\r?\n/)
+                  .map(line => line.match(/^\s*-\s+(.+?)\s*$/)?.[1])
+                  .filter(Boolean)
+              )];
+
+              if (!groups.has(fileKey)) {
+                groups.set(fileKey, []);
+              }
+
+              groups.get(fileKey).push({
+                number: issue.number,
+                authorId: issue.user.id,
+                author: issue.user.login,
+                url: issue.html_url,
+                cheats
+              });
+            }
+
+            const files = {};
+
+            for (const [fileKey, reports] of groups) {
+              const uniqueReporters =
+                new Set(reports.map(r => r.authorId)).size;
+
+              const reportedCheats = {};
+
+              for (const report of reports) {
+                for (const cheat of report.cheats) {
+                  if (!reportedCheats[cheat]) {
+                    reportedCheats[cheat] = [];
+                  }
+
+                  reportedCheats[cheat].push({
+                    number: report.number,
+                    author: report.author,
+                    url: report.url
+                  });
+                }
+              }
+
+              files[fileKey] = {
+                openReports: reports.length,
+                uniqueReporters,
+                issueFlag: uniqueReporters >= 2,
+                reportedCheats
+              };
+            }
+
+            const snapshot = {
+              schema: 1,
+              generatedUtc: new Date().toISOString(),
+              files
+            };
+
+            fs.writeFileSync(
+              'github-issues.json',
+              JSON.stringify(snapshot, null, 2) + '\n'
+            );
+
+            core.info(JSON.stringify(snapshot, null, 2));
+
+      - name: Upload JSON result
+        uses: actions/upload-artifact@v4
+        with:
+          name: hencc-issue-snapshot-test
+          path: github-issues.json
