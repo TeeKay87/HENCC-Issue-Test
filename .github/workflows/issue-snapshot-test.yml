@@ -51,6 +51,9 @@ jobs:
           script: |
             const fs = require('fs');
 
+            const markerRegex =
+              /<!--\s*HENCC:\s*([A-Z]{4}[0-9]{5})\/([0-9.]+)\/source:([a-fA-F0-9]{8})\s*-->/;
+
             const issues = await github.paginate(
               github.rest.issues.listForRepo,
               {
@@ -62,16 +65,41 @@ jobs:
               }
             );
 
+            // GitHub may take a moment to include newly labeled
+            // issues in filtered API results.
+            //
+            // On an 'opened' event, the previous step has already
+            // applied the bug label successfully.
+            //
+            // Include the issue from the trusted GitHub event
+            // payload if it is missing from the API response.
+
+            if (context.payload.action === 'opened') {
+              const openedIssue = context.payload.issue;
+
+              if (
+                openedIssue &&
+                openedIssue.state === 'open' &&
+                markerRegex.test(openedIssue.body || '') &&
+                !issues.some(issue => issue.number === openedIssue.number)
+              ) {
+                issues.unshift(openedIssue);
+
+                core.info(
+                  `Included newly opened issue #${openedIssue.number} ` +
+                  'from the event payload.'
+                );
+              }
+            }
+
             const groups = new Map();
 
             for (const issue of issues) {
               if (issue.pull_request) continue;
+              if (issue.state !== 'open') continue;
 
               const body = issue.body || '';
-
-              const marker = body.match(
-                /<!--\s*HENCC:\s*([A-Z]{4}[0-9]{5})\/([0-9.]+)\/source:([a-fA-F0-9]{8})\s*-->/
-              );
+              const marker = body.match(markerRegex);
 
               if (!marker) continue;
 
