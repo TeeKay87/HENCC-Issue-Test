@@ -3,16 +3,48 @@ name: HENCC - Issue Snapshot Test
 on:
   workflow_dispatch:
   issues:
-    types: [closed, reopened, edited]
-    
+    types: [opened, closed, reopened, edited, labeled, unlabeled]
+
 permissions:
-  issues: read
+  issues: write
 
 jobs:
   generate-snapshot:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Label new HENCC reports
+        if: github.event.action == 'opened'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.issue?.body || '';
+
+            const isHenccReport =
+              /<!--\s*HENCC:\s*[A-Z]{4}[0-9]{5}\/[0-9.]+\/source:[a-fA-F0-9]{8}\s*-->/.test(body);
+
+            if (!isHenccReport) {
+              core.info('Not a HENCC report. Skipping labeling.');
+              return;
+            }
+
+            const existingLabels =
+              (context.payload.issue.labels || []).map(label => label.name);
+
+            if (existingLabels.includes('bug')) {
+              core.info('HENCC report already has the bug label.');
+              return;
+            }
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: ['bug']
+            });
+
+            core.info('HENCC report labeled successfully.');
+
       - name: Generate HENCC issue data
         uses: actions/github-script@v7
         with:
